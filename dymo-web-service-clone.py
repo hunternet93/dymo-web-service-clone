@@ -86,7 +86,7 @@ class DymoWebServiceClone:
                 except KeyError as e:
                     logging.warn('Label data does not contain property "{}"'.format(e.args[0]))
         
-        outfilename = os.path.join(tempfile.gettempdir(), 'dymo-web-service-generated-{}.png'.format(self.print_counter))
+        outfilename = os.path.join(tempfile.gettempdir(), 'dymo-web-service-generated.png')
         
         svg2png(
             bytestring = ET.tostring(root, encoding = 'utf8', method = 'xml'),
@@ -99,11 +99,10 @@ class DymoWebServiceClone:
         if self.printer: printsettings = ('-P', self.printer)
         else: printsettings = tuple()
         
-        # TODO uncomment
-#        subprocess.run(
-#            ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(self.print_counter),
-#            '-q', outfilename) + printsettings
-#        )
+        subprocess.run(
+            ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(self.print_counter),
+            '-q', outfilename) + printsettings
+        )
         
         self.print_counter += 1
         
