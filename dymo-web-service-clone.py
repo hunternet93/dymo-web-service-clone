@@ -2,6 +2,7 @@ import templates
 
 import logging
 import traceback
+import configparser
 
 import http.server
 import urllib
@@ -13,21 +14,68 @@ except ImportError:
     import xml.etree.ElementTree as ET
 
 import os
+import sys
 import tempfile
 import subprocess
 from cairosvg import svg2png
 
-logging.basicConfig(level = logging.DEBUG)
-
-# TODO get all settings from command line or conf file
 class DymoWebServiceClone:
     def __init__(self):
-        self.svgfilename = 'Test Tag.svg'
+        if len(sys.argv) > 1:
+            location = sys.argv[1]
+            if not os.stat(location):
+                print('Cannot open config file {}'.format(location))
+                quit()
 
+        else:
+            for location in ('dymo-web-service-clone.ini', '/etc/dymo-web-service-clone.ini',
+                             '~/.config/dymo-web-service.clone.ini'):
+                if os.stat(location): break
+        
+            if not location:
+                print("Cannot find config file. Please specify the file's location or place it in a supported location.")
+                quit()
+        
+        self.config = configparser.ConfigParser()
+        self.config.read(location)
+        
+        self.dpi = self.config.getint('DymoWebServiceClone', 'dpi')
+        self.printer = self.config.get('DymoWebServiceClone', 'printer', fallback = None)
+        self.debug = self.config.getboolean('DymoWebServiceClone', 'debug', fallback = False)
+
+        if self.debug: logging.basicConfig(level = logging.DEBUG)
+        else: logging.basicConfig(level = logging.INFO)
+        
+        self.labels = []
+        for section in self.config.sections():
+            if section.startswith('Label'):
+                self.labels.append({
+                    'svgfile': self.config.get(section, 'svgfile'),
+                    'hasfield': self.config.get(section, 'hasfield', fallback = None)
+                })
+        
+        if len(self.labels) == 0:
+            print('Config file must contain at least one [Label] section')
+            quit()
+        
         self.print_counter = 1
 
     def replace_render_print_svg(self, data):
-        tree = ET.parse(self.svgfilename)
+        svgfile = None
+        
+        for label in self.labels:
+            if label.get('hasfield'):
+                if label['hasfield'] in data:
+                    svgfile = label['svgfile']
+                    break
+            else:
+                svgfile = label['svgfile']
+        
+        if not svgfile:
+            logger.error('No label conditions match data, aborting print job.')
+            return
+    
+        tree = ET.parse(svgfile)
         root = tree.getroot()
         
         # Finds all tspan elements, formats them with label data. The weird selector is due to how ETree handles namespaces or something. 
@@ -38,33 +86,35 @@ class DymoWebServiceClone:
                 except KeyError as e:
                     logging.warn('Label data does not contain property "{}"'.format(e.args[0]))
         
-        outfilename = os.path.join(tempfile.gettempdir(), 'dymo-web-service-generated.png')
+        outfilename = os.path.join(tempfile.gettempdir(), 'dymo-web-service-generated-{}.png'.format(self.print_counter))
         
         svg2png(
             bytestring = ET.tostring(root, encoding = 'utf8', method = 'xml'),
-            dpi = 300, # TODO pull this from printer info or user settings
+            dpi = self.dpi,
             write_to = outfilename
         )
         
         logging.debug('Rendered SVG to PNG tempfile')
 
-        # TODO print to printer specified in options instead of to default
-        # TODO add -r option to auto-remove temp file after printing
-
-        subprocess.run(
-            ('lpr', '-T', 'Dymo Web Service Clone #{}'.format(self.print_counter), '-q', outfilename)
-        )
+        if self.printer: printsettings = ('-P', self.printer)
+        else: printsettings = tuple()
+        
+        # TODO uncomment
+#        subprocess.run(
+#            ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(self.print_counter),
+#            '-q', outfilename) + printsettings
+#        )
         
         self.print_counter += 1
         
         logging.debug('Printed rendered label')
 
     def get_printer_info_xml(self):
-        # TODO make this use real data instead of placeholder
+        # Currently uses placeholder data. Real printer data could be pulled from CUPS if needed.
         return '<Printers>{}</Printers>'.format(
             templates.printer_info_template.format(
-                name = 'Test',
-                modelname = 'Model T???',
+                name = 'Dymo Web Service Clone',
+                modelname = 'Dymo Web Service Clone',
                 isconnected = 'True',
                 islocal = 'True',
                 istwinturbo = 'False'
@@ -91,10 +141,12 @@ class DymoRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             self.do_GET_wrapped()
         except:
-            # TODO only do this in debug mode
             tb = traceback.format_exc()
             logging.error(tb)
-            self.respond_with_data(templates.exception_template.format(tb.replace('\n', '<br>')), code = 500)            
+            if dymo.debug:
+                self.respond_with_data(templates.exception_traceback_template.format(tb.replace('\n', '<br>')), code = 500)
+            else:
+                self.respond_with_data(templates.exception_template, code = 500)                
     
     def do_GET_wrapped(self):
         logging.debug('GET {} from {}'.format(self.path, self.client_address[0]))
@@ -116,10 +168,12 @@ class DymoRequestHandler(http.server.BaseHTTPRequestHandler):
         try:
             self.do_POST_wrapped()
         except:
-            # TODO only do this in debug mode
             tb = traceback.format_exc()
             logging.error(tb)
-            self.respond_with_data(templates.exception_template.format(tb.replace('\n', '<br>')), code = 500)         
+            if dymo.debug:
+                self.respond_with_data(templates.exception_traceback_template.format(tb.replace('\n', '<br>')), code = 500)
+            else:
+                self.respond_with_data(templates.exception_template, code = 500)              
                 
     def do_POST_wrapped(self):
         logging.debug('POST {} from {}'.format(self.path, self.client_address[0]))
@@ -136,7 +190,7 @@ class DymoRequestHandler(http.server.BaseHTTPRequestHandler):
             for od in tree.iter('ObjectData'):
                 labeldata[od.attrib['Name']] = od.text
             
-            logging.debug('Label data:', labeldata)
+            logging.debug('Label data: {}'.format(labeldata))
 
             dymo.replace_render_print_svg(labeldata)
 

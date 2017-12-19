@@ -51,13 +51,18 @@ error_404_template = html_wrap_template.format('''
 <p>Nothing to see here, move along, move along...</p>
 ''').format()
 
-exception_template = html_wrap_template.format('''
+exception_traceback_template = html_wrap_template.format('''
 <h1>Uh oh.</h1>
 <p>Something bad happened!</p>
 <hr>
 <h3>Error Details</h3>
 <p class="error">{}</p>
 ''')
+
+exception_template = html_wrap_template.format('''
+<h1>Uh oh.</h1>
+<p>Something bad happened!</p>
+''').format()
 
 printer_info_template = '''
 <LabelWriterPrinter>
