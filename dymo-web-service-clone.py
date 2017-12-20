@@ -101,7 +101,7 @@ class DymoWebServiceClone:
         
         subprocess.run(
             ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(self.print_counter),
-            '-q', outfilename) + printsettings
+            outfilename) + printsettings
         )
         
         self.print_counter += 1
