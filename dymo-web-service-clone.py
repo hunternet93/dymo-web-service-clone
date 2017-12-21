@@ -23,14 +23,19 @@ class DymoWebServiceClone:
     def __init__(self):
         if len(sys.argv) > 1:
             location = sys.argv[1]
-            if not os.stat(location):
+            try: os.stat(location)
+            except FileNotFountError:
                 print('Cannot open config file {}'.format(location))
                 quit()
 
         else:
             for location in ('dymo-web-service-clone.ini', '/etc/dymo-web-service-clone.ini',
                              '~/.config/dymo-web-service.clone.ini'):
-                if os.stat(location): break
+                try: os.stat(location)
+                except FileNotFoundError:
+                    location = None
+                    continue
+                else: break
         
             if not location:
                 print("Cannot find config file. Please specify the file's location or place it in a supported location.")
@@ -42,6 +47,9 @@ class DymoWebServiceClone:
         self.dpi = self.config.getint('DymoWebServiceClone', 'dpi')
         self.printer = self.config.get('DymoWebServiceClone', 'printer', fallback = None)
         self.debug = self.config.getboolean('DymoWebServiceClone', 'debug', fallback = False)
+
+        self.sslcert = self.config.get('DymoWebServiceClone', 'sslcert')
+        self.sslkey = self.config.get('DymoWebServiceClone', 'sslkey')
 
         if self.debug: logging.basicConfig(level = logging.DEBUG)
         else: logging.basicConfig(level = logging.INFO)
@@ -210,7 +218,7 @@ if __name__ == '__main__':
     logging.info('Serving on port {}'.format(port))
     
     # TODO something about this causes wget to throw errors when accessing. Works OK in Firefox, so not fixing for now.
-    httpd.socket = ssl.wrap_socket(httpd.socket, certfile = 'chain.pem', keyfile = 'key.key', server_side = True)
+    httpd.socket = ssl.wrap_socket(httpd.socket, certfile = dymo.sslcert, keyfile = dymo.sslkey, server_side = True)
     
     try:
         httpd.serve_forever()
