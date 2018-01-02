@@ -15,14 +15,14 @@ except ImportError:
 
 import os
 import sys
+import time
 import tempfile
+
+import queue
 import threading
 import subprocess
 
 from cairosvg import svg2png
-
-# TODO handle the printing of multiple labels
-# TODO make print processing multithreaded
 
 class DymoWebServiceClone:
     def __init__(self):
@@ -72,17 +72,21 @@ class DymoWebServiceClone:
             print('Config file must contain at least one [Label] section')
             quit()
         
+        self.jobqueue = queue.Queue()
+        self.jobthread = None
+        
+        self.job_counter = 1
         self.print_counter = 1
 
     def print_label(self, data):
-        jobnum = self.print_counter
-        self.print_counter += 1
+        jobnum = self.job_counter
+        self.job_counter += 1
         
-        thread = threading.Thread(target = self.replace_render_print_svg, args = (data, jobnum))
+        thread = threading.Thread(target = self.render_svg, args = (data, jobnum))
         thread.start()
 
-    # Each print job runs in its own thread.
-    def replace_render_print_svg(self, data, jobnum):
+    # Renders SVG to file, adds to internal print queue
+    def render_svg(self, data, jobnum):
         logging.debug('Processing job #{}'.format(jobnum))
         svgfile = None
         
@@ -117,20 +121,41 @@ class DymoWebServiceClone:
             write_to = outfilename
         )
         
+        self.add_job(outfilename)
+        
         logging.debug('Rendered job #{}'.format(jobnum))
 
+    def add_job(self, filename):
+        self.jobqueue.put(filename)
+        
+        if not self.jobthread or not self.jobthread.is_alive():
+            self.jobthread = threading.Thread(target = self.do_jobthread)
+            self.jobthread.start()
+        
+    def do_jobthread(self):
+        # Waits a bit to aggregate multiple labels into one job, useful for certain printers since for some reason our DYMOs like to disconnect and reconnect USB after each job. Bleh.
+        time.sleep(1)
+        
+        files = []
+        while True:
+            try: files.append(self.jobqueue.get(block = False))
+            except queue.Empty: break
+        
         if self.printer: printsettings = ('-P', self.printer)
         else: printsettings = tuple()
         
+        logging.debug('Aggregating {} jobs into single print'.format(len(files)))
+        
         if self.fakeprint:
-            logging.debug('Fakeprint enabled, not really printing job #{}'.format(jobnum))
+            logging.debug('Fakeprint enabled, not really printing print job #{}'.format(self.print_counter))
         else:
             subprocess.run(
-                ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(jobnum),
-                outfilename) + printsettings
+                ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(self.print_counter)) +
+                printsettings + files
             )
         
-        logging.debug('Printed job #{}'.format(jobnum))
+        logging.debug('Printed job #{}'.format(self.print_counter))
+        self.print_counter += 1
 
     def get_printer_info_xml(self):
         # Currently uses placeholder data. Real printer data could be pulled from CUPS if needed.
@@ -190,6 +215,9 @@ class DymoRequestHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             self.do_POST_wrapped()
+        except ssl.SSLEOFError:
+            # The SSL module doesn't like the way Blink / WebKit end HTTPS connections. Ignoring.
+            pass
         except:
             tb = traceback.format_exc()
             logging.error(tb)
