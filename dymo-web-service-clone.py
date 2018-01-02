@@ -16,8 +16,13 @@ except ImportError:
 import os
 import sys
 import tempfile
+import threading
 import subprocess
+
 from cairosvg import svg2png
+
+# TODO handle the printing of multiple labels
+# TODO make print processing multithreaded
 
 class DymoWebServiceClone:
     def __init__(self):
@@ -47,6 +52,7 @@ class DymoWebServiceClone:
         self.dpi = self.config.getint('DymoWebServiceClone', 'dpi')
         self.printer = self.config.get('DymoWebServiceClone', 'printer', fallback = None)
         self.debug = self.config.getboolean('DymoWebServiceClone', 'debug', fallback = False)
+        self.fakeprint = self.config.getboolean('DymoWebServiceClone', 'fakeprint', fallback = False)
 
         self.sslcert = self.config.get('DymoWebServiceClone', 'sslcert')
         self.sslkey = self.config.get('DymoWebServiceClone', 'sslkey')
@@ -68,7 +74,16 @@ class DymoWebServiceClone:
         
         self.print_counter = 1
 
-    def replace_render_print_svg(self, data):
+    def print_label(self, data):
+        jobnum = self.print_counter
+        self.print_counter += 1
+        
+        thread = threading.Thread(target = self.replace_render_print_svg, args = (data, jobnum))
+        thread.start()
+
+    # Each print job runs in its own thread.
+    def replace_render_print_svg(self, data, jobnum):
+        logging.debug('Processing job #{}'.format(jobnum))
         svgfile = None
         
         for label in self.labels:
@@ -80,7 +95,7 @@ class DymoWebServiceClone:
                 svgfile = label['svgfile']
         
         if not svgfile:
-            logger.error('No label conditions match data, aborting print job.')
+            logger.error('No label conditions match data, aborting print job #{}.'.format(jobnum))
             return
     
         tree = ET.parse(svgfile)
@@ -94,7 +109,7 @@ class DymoWebServiceClone:
                 except KeyError as e:
                     logging.warn('Label data does not contain property "{}"'.format(e.args[0]))
         
-        outfilename = os.path.join(tempfile.gettempdir(), 'dymo-web-service-generated.png')
+        outfilename = os.path.join(tempfile.gettempdir(), 'dymo-web-service-generated-{}.png'.format(jobnum))
         
         svg2png(
             bytestring = ET.tostring(root, encoding = 'utf8', method = 'xml'),
@@ -102,19 +117,20 @@ class DymoWebServiceClone:
             write_to = outfilename
         )
         
-        logging.debug('Rendered SVG to PNG tempfile')
+        logging.debug('Rendered job #{}'.format(jobnum))
 
         if self.printer: printsettings = ('-P', self.printer)
         else: printsettings = tuple()
         
-        subprocess.run(
-            ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(self.print_counter),
-            outfilename) + printsettings
-        )
+        if self.fakeprint:
+            logging.debug('Fakeprint enabled, not really printing job #{}'.format(jobnum))
+        else:
+            subprocess.run(
+                ('lpr', '-r', '-T', 'Dymo Web Service Clone #{}'.format(jobnum),
+                outfilename) + printsettings
+            )
         
-        self.print_counter += 1
-        
-        logging.debug('Printed rendered label')
+        logging.debug('Printed job #{}'.format(jobnum))
 
     def get_printer_info_xml(self):
         # Currently uses placeholder data. Real printer data could be pulled from CUPS if needed.
@@ -193,13 +209,15 @@ class DymoRequestHandler(http.server.BaseHTTPRequestHandler):
             
             tree = ET.fromstring(postdata['labelSetXml'][0])
             
-            labeldata = {}
-            for od in tree.iter('ObjectData'):
-                labeldata[od.attrib['Name']] = od.text
-            
-            logging.debug('Label data: {}'.format(labeldata))
+            # For each label record in tree, extract key-value pairs into labeldata dict, then print.
+            for record in tree.iter('LabelRecord'):
+                labeldata = {}
+                for od in record.iter('ObjectData'):
+                    labeldata[od.attrib['Name']] = od.text
+                
+                logging.debug('Label data: {}'.format(labeldata))
 
-            dymo.replace_render_print_svg(labeldata)
+                dymo.print_label(labeldata)
 
             self.respond_with_data('')
 
