@@ -1,5 +1,5 @@
 # Dymo Web Service Clone
-This is a work-in-progress open-source reimplementation of Dymo's web service for label printing.
+This is an open-source reimplementation of Dymo's web service for label printing.
 
 ### Requirements
 * Linux (support for other OSes would be trivial, but also unneccessary)
@@ -7,10 +7,14 @@ This is a work-in-progress open-source reimplementation of Dymo's web service fo
 * [cairosvg](http://cairosvg.org/documentation/)
 
 ### Usage
-Dymo Web Service Clone is still being developed and isn't quite ready-to-use. You can give it a try though, just install the above requirements and then run with:
+After installing the above requirements, edit the included `dymo-web-service-clone.ini` file as needed. Labels will be printed using the specified SVG file as a template.
 
-    python3 dymo-web-service-clone.py
+When a print job is received its fields will be applied to the template, replacing text in brackes with the corresponding field from the print job. For example, `{Name}` would be replaced from the Name field of an incoming job. When the `debug` option in the config is enabled, all label data fields will be shown in the console, useful for determining which fields are available.
 
-Currently, it advertises a dummy printer and waits for print jobs. When a print job is received, the label data is extracted and then applied to the included `Test Tag.svg` file. Text in brackets `{like this}` are replaced with the appropriate values from the received label data. Next, the generated label is printed on the system default printer.
+After editing the config file, simply run:
 
-Eventually I'll replace all the hard-coded stuff with a proper config file, and write some real documentation.
+    python3 dymo-web-service-clone.py <location of config file>
+
+Since the server uses a self-signed certificate, you must accept the certificate. Open [https://127.0.0.1:41951/](https://127.0.0.1:41951/) in your browser and allow the insecure connection. Once you see the status page, it's ready to go.
+
+The server will wait for incoming print jobs and print them to the specified printer, or the system default if none are specified.
